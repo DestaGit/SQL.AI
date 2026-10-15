@@ -1,0 +1,111 @@
+# SQL.AI default policy bundle (Phase 1).
+# Deny by default: anything not granted here is refused.
+# Changes need tests in policy/golden.yaml and a second reviewer (POL-02, POL-03).
+
+version: v1
+
+settings:
+  approval_rows: 25        # P-09: row-level personal data over this many rows is held
+  small_group_k: 5         # P-08: aggregates from groups under k rows are suppressed
+  result_cap: 500          # P-10
+  budget_rows: 60          # P-13: personal-data rows per user per domain per 24h
+  cost_limit: 100000       # P-14: estimated row combinations
+  statement_timeout_s: 20  # GW-05
+  round_to: 1000           # PRV-11: rounding for aggregate-then-protect results
+
+purposes:
+  - Reporting and analytics
+  - Customer support
+  - Billing
+  - Account management
+  - Legal or compliance
+  - Marketing campaign
+high_risk_purposes:        # P-15: always need approval when personal data is returned
+  - Marketing campaign
+
+catalog:
+  customers:
+    domain: customers
+    region_column: region
+    columns:
+      customer_id: { type: INTEGER, class: Public }
+      full_name:   { type: VARCHAR, class: PII }
+      email:       { type: VARCHAR, class: PII }
+      phone:       { type: VARCHAR, class: PII }
+      region:      { type: VARCHAR, class: Public }
+      country:     { type: VARCHAR, class: Public }
+      tier:        { type: VARCHAR, class: Public }
+      signup_date: { type: DATE,    class: Public }
+      status:      { type: VARCHAR, class: Public }
+      churn_date:  { type: DATE,    class: Public }
+  orders:
+    domain: customers
+    region_column: region
+    columns:
+      order_id:    { type: INTEGER, class: Public }
+      customer_id: { type: INTEGER, class: Public }
+      order_date:  { type: DATE,    class: Public }
+      product:     { type: VARCHAR, class: Public }
+      amount:      { type: DOUBLE,  class: Confidential }
+      region:      { type: VARCHAR, class: Public }
+  tickets:
+    domain: customers
+    region_column: region
+    columns:
+      ticket_id:   { type: INTEGER, class: Public }
+      customer_id: { type: INTEGER, class: Public }
+      opened_date: { type: DATE,    class: Public }
+      category:    { type: VARCHAR, class: Public }
+      priority:    { type: VARCHAR, class: Public }
+      csat:        { type: INTEGER, class: Public }
+      region:      { type: VARCHAR, class: Public }
+  employees:
+    domain: people
+    region_column: region
+    columns:
+      employee_id: { type: INTEGER, class: Public }
+      full_name:   { type: VARCHAR, class: PII }
+      department:  { type: VARCHAR, class: Public }
+      title:       { type: VARCHAR, class: Public }
+      region:      { type: VARCHAR, class: Public }
+      salary:      { type: INTEGER, class: Restricted }
+      ssn:         { type: VARCHAR, class: Restricted }
+      hire_date:   { type: DATE,    class: Public }
+
+roles:
+  analyst_eu:
+    title: Analyst, EU
+    tables: [customers, orders, tickets]
+    regions: [EU]
+    masks: { customers.full_name: initials, customers.email: partial_email, customers.phone: redact }
+  sales_manager_na:
+    title: Sales manager, North America
+    tables: [customers, orders, tickets]
+    regions: [NA]
+    masks: { customers.phone: last4 }
+    approver_for: [customers]
+  hr_partner:
+    title: HR partner
+    tables: [employees]
+    masks: { employees.ssn: last4 }
+  data_admin:
+    title: Data admin
+    tables: [customers, orders, tickets, employees]
+    masks: { customers.email: partial_email, customers.phone: last4, employees.salary: round_10k, employees.ssn: last4 }
+    approver_for: [customers, people, access]
+    audit: all
+    policy_admin: true
+  security_officer:
+    title: Security officer
+    tables: []
+    approver_for: [fallback]
+    audit: all
+    policy_admin: true
+
+# Local development identity provider only (SQLAI_ENV=local). Production uses OIDC/SAML + SCIM.
+dev_users:
+  ana:   { name: Ana Ruiz,      roles: [analyst_eu],       token: dev-ana }
+  sam:   { name: Sam Okafor,    roles: [sales_manager_na], token: dev-sam }
+  priya: { name: Priya Shah,    roles: [hr_partner],       token: dev-priya }
+  dana:  { name: Dana Cole,     roles: [data_admin],       token: dev-dana }
+  sofia: { name: Sofia Martins, roles: [security_officer], token: dev-sofia }

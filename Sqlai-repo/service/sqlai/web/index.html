@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SQL.AI Workbench</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<noscript><div class="wrap">SQL.AI needs JavaScript to run. Enable it and reload the page.</div></noscript>
+
+<section id="signin" class="signin" aria-labelledby="signin-title" hidden>
+  <div class="signin-card">
+    <div class="eyebrow">Governed analytics workbench</div>
+    <h1 id="signin-title">SQL<i class="dot">.</i>AI</h1>
+    <p class="muted mt0" id="signin-lede">Choose a local development account. In production this is your company's single sign-on.</p>
+    <div class="users" id="user-list"></div>
+    <div class="banner">Connected to the SQL.AI service. Every query is checked by the policy gate on the server and recorded in the audit log.</div>
+  </div>
+</section>
+
+<div id="app" hidden>
+<header class="bar">
+  <div class="wrap bar-in">
+    <div class="brand"><b>SQL<i>.</i>AI</b><span>Governed analytics workbench</span></div>
+    <span class="chip gate" id="pv-chip">Policy · server enforced</span>
+    <div class="me">
+      <div class="who"><b id="me-name"></b><span id="me-role"></span></div>
+      <div class="avatar" id="me-av" aria-hidden="true"></div>
+      <button class="btn sm ghost" id="signout-btn" type="button">Sign out</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <nav class="tabs" role="tablist" aria-label="Sections" id="tabs">
+      <button role="tab" id="tab-work" data-tab="work" aria-controls="view-work">Workbench</button>
+      <button role="tab" id="tab-catalog" data-tab="catalog" aria-controls="view-catalog">Data catalog</button>
+      <button role="tab" id="tab-audit" data-tab="audit" aria-controls="view-audit">Audit log</button>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+  <section id="view-work" role="tabpanel" aria-labelledby="tab-work" class="grid-work" hidden>
+    <div class="stack grow">
+      <div class="panel pad stack">
+        <div class="sec-head">
+          <div><h2>Query your data</h2><p class="lede small">Write SQL or start from an example. The server checks it against policy, applies your row filters and masks, and records the result. AI drafting arrives in Phase 2.</p></div>
+          <span class="chip mute server-chip" id="health-chip">Checking service…</span>
+        </div>
+        <div class="examples" id="examples" aria-label="Example queries"></div>
+      </div>
+
+      <form class="panel pad stack" id="run-form" novalidate>
+        <div class="row between"><h3>SQL</h3><span class="note">Ctrl+Enter to run</span></div>
+        <label class="sr" for="sql">SQL query</label>
+        <textarea id="sql" class="sql" spellcheck="false" placeholder="SELECT region, COUNT(*) AS customers FROM customers GROUP BY region"></textarea>
+        <div class="row between">
+          <label class="purpose" for="purpose">Purpose
+            <select id="purpose"><option value="">Not specified</option></select>
+          </label>
+          <button class="btn gate" id="run-btn" type="submit">Run under policy</button>
+        </div>
+        <p class="note mt0">Read-only. A purpose is required when the result shows personal data row by row.</p>
+        <p class="note err mt0" id="run-err" aria-live="polite"></p>
+      </form>
+
+      <div class="panel pad stack" id="results-panel">
+        <div class="sec-head"><h3>Results</h3><div class="row" id="res-chips"></div></div>
+        <div id="results"><div class="empty">Run a query to see results here.</div></div>
+        <div id="trust"></div>
+      </div>
+    </div>
+
+    <aside class="gate-rail panel" aria-labelledby="gate-title">
+      <div class="gate-head"><h3 id="gate-title">Policy gate</h3><span class="chip mute" id="gate-state">Waiting</span></div>
+      <ul class="checks" id="checks"></ul>
+      <div id="verdict" aria-live="polite"></div>
+    </aside>
+  </section>
+
+  <section id="view-catalog" role="tabpanel" aria-labelledby="tab-catalog" class="stack" hidden>
+    <div><h2>Data catalog</h2><p class="lede" id="cat-lede">Tables you can read, how each column is classified, and what you see.</p></div>
+    <div class="cat" id="catalog"></div>
+  </section>
+
+  <section id="view-audit" role="tabpanel" aria-labelledby="tab-audit" class="stack" hidden>
+    <div class="sec-head">
+      <div><h2>Audit log</h2><p class="lede" id="audit-lede"></p></div>
+      <div class="row" id="audit-admin" hidden>
+        <span class="chip mute" id="chain-state">Not verified</span>
+        <button class="btn" id="verify-btn" type="button">Verify chain and checkpoints</button>
+        <button class="btn" id="checkpoint-btn" type="button">Write checkpoint</button>
+      </div>
+    </div>
+    <div class="row"><button class="btn sm" id="audit-refresh" type="button">Refresh</button><span class="note" id="audit-note" aria-live="polite"></span></div>
+    <div class="tbl-box free"><table id="audit-table"></table></div>
+  </section>
+</main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,108 @@
+# Policy golden tests (POL-03). Every policy change must keep these passing.
+# expect.decision: allowed | modified | held | blocked | error
+# expect.rule: the rule that blocked or held (optional)
+# expect.check: optional named assertion implemented in tests/test_golden.py
+
+- name: analyst can't read employees
+  user: ana
+  sql: SELECT department, AVG(salary) AS avg_salary FROM employees GROUP BY department
+  expect: { decision: blocked, rule: P-04 }
+
+- name: unknown and ungranted tables get the same message
+  user: ana
+  sql: SELECT x FROM payroll
+  expect: { decision: blocked, rule: P-04, check: same_message_as_ungranted }
+
+- name: writes are refused
+  user: dana
+  sql: DELETE FROM customers
+  expect: { decision: blocked, rule: P-02 }
+
+- name: multiple statements are refused
+  user: dana
+  sql: SELECT region FROM orders; DROP TABLE orders
+  expect: { decision: blocked, rule: P-02 }
+
+- name: comments are refused
+  user: ana
+  sql: SELECT region FROM orders -- note
+  expect: { decision: blocked, rule: P-03 }
+
+- name: file-reading table functions are refused
+  user: dana
+  sql: SELECT * FROM read_csv('/etc/passwd')
+  expect: { decision: blocked, rule: P-03 }
+
+- name: SELECT * on customers is refused
+  user: dana
+  sql: SELECT * FROM customers
+  expect: { decision: blocked, rule: P-05 }
+
+- name: personal data needs a purpose
+  user: sam
+  sql: SELECT customer_id, full_name FROM customers WHERE customer_id < 1010
+  expect: { decision: blocked, rule: P-15 }
+
+- name: analyst contact list is held
+  user: ana
+  sql: SELECT customer_id, full_name, email, phone FROM customers
+  purpose: Customer support
+  expect: { decision: held, rule: P-09 }
+
+- name: GROUP BY on personal data is still held (A1)
+  user: ana
+  sql: SELECT full_name, email, COUNT(*) AS n FROM customers GROUP BY full_name, email
+  purpose: Customer support
+  expect: { decision: held, rule: P-09 }
+
+- name: renaming through a CTE keeps lineage (A13)
+  user: ana
+  sql: WITH a AS (SELECT full_name AS nm FROM customers) SELECT nm FROM a
+  expect: { decision: blocked, rule: P-15 }
+
+- name: marketing use of personal data needs approval
+  user: sam
+  sql: SELECT customer_id, email FROM customers WHERE customer_id < 1012
+  purpose: Marketing campaign
+  expect: { decision: held, rule: P-09 }
+
+- name: renamed counts are still suppressed (A3)
+  user: ana
+  sql: SELECT country, tier, COUNT(*) AS x FROM customers GROUP BY country, tier
+  expect: { decision: modified, check: no_small_numbers_in_x }
+
+- name: SUM(CASE) counts are suppressed (A4)
+  user: ana
+  sql: SELECT SUM(CASE WHEN country = 'Sweden' AND tier = 'Enterprise' THEN 1 ELSE 0 END) AS z FROM customers
+  expect: { decision: modified, check: z_suppressed }
+
+- name: unconstrained joins are refused (A6)
+  user: dana
+  sql: SELECT a.order_id FROM orders a, orders b
+  expect: { decision: blocked, rule: P-14 }
+
+- name: analyst only sees EU rows
+  user: ana
+  sql: SELECT region, COUNT(*) AS orders FROM orders GROUP BY region
+  expect: { decision: modified, check: only_eu }
+
+- name: masks follow aliases (A8)
+  user: sam
+  sql: SELECT customer_id, phone AS contact FROM customers WHERE customer_id < 1012
+  purpose: Customer support
+  expect: { decision: modified, check: contact_masked }
+
+- name: admin average salary uses true values, then rounds (A5)
+  user: dana
+  sql: SELECT department, COUNT(*) AS headcount, ROUND(AVG(salary), 0) AS avg_salary FROM employees GROUP BY department
+  expect: { decision: modified, check: avg_salary_rounded_to_1k }
+
+- name: inner aggregation can't hide small groups
+  user: ana
+  sql: WITH a AS (SELECT region, COUNT(*) AS n FROM customers GROUP BY region) SELECT region, n FROM a
+  expect: { decision: blocked, rule: P-08 }
+
+- name: security officer reads no business data
+  user: sofia
+  sql: SELECT region FROM orders
+  expect: { decision: blocked, rule: P-04 }

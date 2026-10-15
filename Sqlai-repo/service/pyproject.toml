@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlai"
+version = "0.2.0"
+description = "SQL.AI Phase 1: governed query gateway with policy gate, column lineage and hash-chained audit"
+requires-python = ">=3.11"
+license = { text = "[LICENSE]" }
+dependencies = [
+  "sqlglot==29.0.1",
+  "duckdb==1.4.4",
+  "fastapi==0.120.4",
+  "uvicorn==0.38.0",
+  "pydantic==2.12.3",
+  "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+include = ["sqlai*"]
+
+[tool.setuptools.package-data]
+sqlai = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

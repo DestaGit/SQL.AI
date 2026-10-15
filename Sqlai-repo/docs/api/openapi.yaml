@@ -1,0 +1,365 @@
+openapi: 3.1.0
+info:
+  title: SQL.AI API
+  version: 1.1.0
+  summary: Governed analytics — every request passes the policy gate.
+  description: |
+    Planned public API for the SQL.AI production service (not available in the standalone demo).
+    Every query, whatever its source, passes the same policy gate as the web app. A `blocked`
+    decision is a normal 200 response: the gate worked. Fail-closed conditions return 503.
+  contact:
+    email: "[SUPPORT EMAIL]"
+servers:
+  - url: https://api.[DOMAIN]/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Questions
+  - name: Queries
+  - name: Approvals
+  - name: Access
+  - name: Audit
+  - name: Policy
+  - name: Notifications
+
+paths:
+  /questions:
+    post:
+      tags: [Questions]
+      summary: Draft SQL from a plain-English question
+      description: The model receives only the caller's visible schema. Prompts are screened by rule P-01.
+      security: [{ bearerAuth: [query:draft] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, maxLength: 2000, example: "Revenue by region in Q3 2026" }
+                previous_request_id: { type: string, description: Refine an earlier question (follow-up). }
+      responses:
+        "200":
+          description: Draft, decline or block
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Draft" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /queries:
+    post:
+      tags: [Queries]
+      summary: Run SQL under policy
+      security: [{ bearerAuth: [query:run] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql]
+              properties:
+                sql: { type: string, maxLength: 20000 }
+                purpose:
+                  type: string
+                  description: Required when the result shows personal data row by row (rule P-15).
+                  enum: ["Reporting and analytics", "Customer support", "Billing", "Account management", "Legal or compliance", "Marketing campaign"]
+                approval_id: { type: string, description: Single-use approval token for a held query. }
+      responses:
+        "200":
+          description: Gate decision and, when allowed, results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409":
+          description: Approval token used, expired, or bound to different SQL or policy version
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503": { $ref: "#/components/responses/FailClosed" }
+        "504":
+          description: Warehouse timeout
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /approvals:
+    get:
+      tags: [Approvals]
+      summary: List approval and access requests visible to you
+      security: [{ bearerAuth: [approvals:read] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, denied, used, expired] } }
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ApprovalRequest" } }
+
+  /approvals/{id}/approve:
+    post:
+      tags: [Approvals]
+      summary: Approve a request (not your own)
+      security: [{ bearerAuth: [approvals:decide] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody: { $ref: "#/components/requestBodies/DecisionNote" }
+      responses:
+        "200": { description: Approved, content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { description: Not an eligible approver, or your own request (P-11), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /approvals/{id}/deny:
+    post:
+      tags: [Approvals]
+      summary: Deny a request
+      security: [{ bearerAuth: [approvals:decide] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody: { $ref: "#/components/requestBodies/DecisionNote" }
+      responses:
+        "200": { description: Denied, content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+
+  /access-requests:
+    post:
+      tags: [Access]
+      summary: Request 24-hour redacted access to a table
+      security: [{ bearerAuth: [access:request] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [table, reason]
+              properties:
+                table: { type: string }
+                reason: { type: string, minLength: 5 }
+      responses:
+        "201": { description: Request created, content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+
+  /audit:
+    get:
+      tags: [Audit]
+      summary: Search audit records
+      description: Callers without audit:read-all see only their own records.
+      security: [{ bearerAuth: [audit:read] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: user, in: query, schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string, enum: [allowed, blocked, held, alert, info] } }
+        - { name: table, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Page of records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records: { type: array, items: { $ref: "#/components/schemas/AuditRecord" } }
+                  next_cursor: { type: [string, "null"] }
+
+  /audit/verify:
+    post:
+      tags: [Audit]
+      summary: Verify the hash chain for a range
+      security: [{ bearerAuth: [audit:read] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { from_seq: { type: integer }, to_seq: { type: integer } } }
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  entries: { type: integer }
+                  broken_at: { type: [integer, "null"] }
+
+  /audit/exports:
+    post:
+      tags: [Audit]
+      summary: Start an audit export or evidence pack
+      security: [{ bearerAuth: [audit:export] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [csv, json, evidence_pack] }
+                framework: { type: string, example: "SOC 2" }
+                period_start: { type: string, format: date }
+                period_end: { type: string, format: date }
+      responses:
+        "202": { description: Export started; poll the returned URL }
+
+  /policy/versions:
+    get:
+      tags: [Policy]
+      summary: List policy versions
+      security: [{ bearerAuth: [policy:read] }]
+      responses:
+        "200": { description: Versions, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PolicyVersion" } } } } }
+    post:
+      tags: [Policy]
+      summary: Propose a policy version (runs the policy test suite; needs a second admin)
+      security: [{ bearerAuth: [policy:admin] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settings, reason]
+              properties:
+                settings: { $ref: "#/components/schemas/PolicySettings" }
+                reason: { type: string }
+      responses:
+        "201": { description: Proposed }
+        "422": { description: Policy tests failed; the proposal was not created }
+
+  /simulate:
+    get:
+      tags: [Policy]
+      summary: What a user can see in a table (access simulator)
+      security: [{ bearerAuth: [policy:read] }]
+      parameters:
+        - { name: user, in: query, required: true, schema: { type: string } }
+        - { name: table, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Visible rows and per-column treatment }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Your notifications
+      security: [{ bearerAuth: [notifications:read] }]
+      responses:
+        "200": { description: Notifications }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Scoped token issued via your identity provider.
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+  requestBodies:
+    DecisionNote:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, required: [note], properties: { note: { type: string, minLength: 3 } } }
+  responses:
+    Unauthenticated:
+      description: Missing or expired token
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: Too many requests
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    FailClosed:
+      description: A safety dependency (policy or audit) is unavailable, so nothing ran
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Draft:
+      type: object
+      properties:
+        request_id: { type: string }
+        status: { type: string, enum: [drafted, declined, blocked] }
+        sql: { type: string }
+        explanation: { type: string }
+        reason: { type: string }
+        source: { type: string, enum: [ai, builtin, template] }
+    RuleResult:
+      type: object
+      properties:
+        id: { type: string, example: P-06 }
+        state: { type: string, enum: [pass, applied, held, blocked] }
+        detail: { type: string }
+    Trust:
+      type: object
+      properties:
+        certified_metrics: { type: array, items: { type: string } }
+        data_as_of: { type: string, format: date }
+        rows_in_scope: { type: string }
+        masked_columns: { type: object, additionalProperties: { type: string } }
+        suppressed_values: { type: integer }
+        rules_applied: { type: array, items: { type: string } }
+        policy_version: { type: string }
+        purpose: { type: [string, "null"] }
+        audit_seq: { type: integer }
+    QueryResult:
+      type: object
+      properties:
+        request_id: { type: string }
+        decision: { type: string, enum: [allowed, modified, held, blocked, error] }
+        rules: { type: array, items: { $ref: "#/components/schemas/RuleResult" } }
+        columns: { type: array, items: { type: object, properties: { name: { type: string }, type: { type: string } } } }
+        rows: { type: array, items: { type: array, items: {} } }
+        row_count: { type: integer }
+        approval_request_id: { type: [string, "null"] }
+        trust: { $ref: "#/components/schemas/Trust" }
+    ApprovalRequest:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [query, access] }
+        requester: { type: string }
+        reason: { type: string }
+        purpose: { type: [string, "null"] }
+        table: { type: [string, "null"] }
+        sql_hash: { type: [string, "null"] }
+        policy_version: { type: string }
+        status: { type: string, enum: [pending, approved, denied, used, expired] }
+        eligible_approvers: { type: array, items: { type: string } }
+        decision_note: { type: [string, "null"] }
+        expires_at: { type: string, format: date-time }
+    AuditRecord:
+      type: object
+      properties:
+        seq: { type: integer }
+        ts: { type: string, format: date-time }
+        actor: { type: string }
+        action: { type: string }
+        outcome: { type: string, enum: [allowed, blocked, held, alert, info] }
+        detail: { type: string, description: Personal-data patterns redacted }
+        sql_hash: { type: string }
+        policy_version: { type: string }
+        rules: { type: array, items: { $ref: "#/components/schemas/RuleResult" } }
+        row_count: { type: [integer, "null"] }
+        prev_hash: { type: string }
+        hash: { type: string }
+    PolicySettings:
+      type: object
+      properties:
+        approval_rows: { type: integer, minimum: 1, maximum: 1000, default: 25 }
+        small_group_k: { type: integer, minimum: 2, maximum: 20, default: 5 }
+        result_cap: { type: integer, minimum: 10, maximum: 5000, default: 500 }
+        approval_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 72 }
+        budget_rows: { type: integer, minimum: 10, maximum: 5000, default: 60 }
+        cost_limit: { type: integer, minimum: 1000, maximum: 10000000, default: 100000 }
+    PolicyVersion:
+      type: object
+      properties:
+        id: { type: string }
+        settings: { $ref: "#/components/schemas/PolicySettings" }
+        proposed_by: { type: string }
+        approved_by: { type: string }
+        published_at: { type: string, format: date-time }
+        note: { type: string }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, enum: [UNAUTHENTICATED, FORBIDDEN_SCOPE, POLICY_UNAVAILABLE, AUDIT_UNAVAILABLE, APPROVAL_INVALID, WAREHOUSE_TIMEOUT, RATE_LIMITED, NOT_ELIGIBLE] }
+            message: { type: string }
+            request_id: { type: string }
